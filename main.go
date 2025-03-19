@@ -16,24 +16,32 @@ type APIMapping struct {
 }
 
 var (
-	apiStore     = make(map[string]string)        // Maps API Key -> Local API URL
+	apiStore      = make(map[string]string)        // Maps API Key -> Local API URL
 	clientSockets = make(map[string]*websocket.Conn) // Maps API Key -> WebSocket Connection
-	mutex        = sync.Mutex{}
-	upgrader     = websocket.Upgrader{
-		CheckOrigin: func(r *http.Request) bool { return true }, // Allow all origins
+	mutex         = sync.Mutex{}
+	upgrader      = websocket.Upgrader{
+		CheckOrigin: func(r *http.Request) bool {
+			return true // Allow WebSocket connections from any origin
+		},
 	}
 )
 
 // Enable CORS
-func enableCORS(w http.ResponseWriter) {
-	w.Header().Set("Access-Control-Allow-Origin", "*")
-	w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+func enableCORS(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Access-Control-Allow-Origin", "*") // Allow all origins
+	w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
 	w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+
+	// Handle preflight requests
+	if r.Method == "OPTIONS" {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
 }
 
 // Handle WebSocket Connection (User 1)
 func wsHandler(w http.ResponseWriter, r *http.Request) {
-	enableCORS(w)
+	enableCORS(w, r)
 
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
@@ -72,7 +80,7 @@ func wsHandler(w http.ResponseWriter, r *http.Request) {
 
 // Register User 1's Local API
 func registerAPI(w http.ResponseWriter, r *http.Request) {
-	enableCORS(w)
+	enableCORS(w, r)
 
 	var apiData APIMapping
 	err := json.NewDecoder(r.Body).Decode(&apiData)
@@ -88,12 +96,15 @@ func registerAPI(w http.ResponseWriter, r *http.Request) {
 	mutex.Unlock()
 
 	publicURL := fmt.Sprintf("https://api-share-prototype-1-jr7j.onrender.com/api/%s", apiKey)
-	json.NewEncoder(w).Encode(map[string]string{"public_api": publicURL, "ws_url": fmt.Sprintf("wss://api-share-prototype-1-jr7j.onrender.com/ws/%s", apiKey)})
+	json.NewEncoder(w).Encode(map[string]string{
+		"public_api": publicURL,
+		"ws_url":     fmt.Sprintf("wss://api-share-prototype-1-jr7j.onrender.com/ws/%s", apiKey),
+	})
 }
 
 // Handle API Call from User 2
 func proxyRequest(w http.ResponseWriter, r *http.Request) {
-	enableCORS(w)
+	enableCORS(w, r)
 
 	apiKey := r.URL.Path[len("/api/"):] // Extract API key
 
@@ -110,8 +121,8 @@ func proxyRequest(w http.ResponseWriter, r *http.Request) {
 	// Send request details via WebSocket if connected
 	if wsExists {
 		reqData := map[string]interface{}{
-			"method": r.Method,
-			"url":    localAPI,
+			"method":  r.Method,
+			"url":     localAPI,
 			"headers": r.Header,
 		}
 
