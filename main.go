@@ -6,6 +6,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"os"
 	"sync"
 )
 
@@ -18,20 +19,17 @@ var (
 	mutex    = sync.Mutex{}
 )
 
-// Enable CORS
 func enableCORS(w http.ResponseWriter) {
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 	w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
 	w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
 }
 
-// Handle OPTIONS request for CORS preflight
 func handleOptions(w http.ResponseWriter, r *http.Request) {
 	enableCORS(w)
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// Register User 1's Local API
 func registerAPI(w http.ResponseWriter, r *http.Request) {
 	if r.Method == "OPTIONS" {
 		handleOptions(w, r)
@@ -52,11 +50,10 @@ func registerAPI(w http.ResponseWriter, r *http.Request) {
 	apiStore[apiKey] = apiData.LocalAPI
 	mutex.Unlock()
 
-	publicURL := fmt.Sprintf("http://localhost:8080/api/%s", apiKey)
+	publicURL := fmt.Sprintf("/api/%s", apiKey)
 	json.NewEncoder(w).Encode(map[string]string{"public_api": publicURL})
 }
 
-// Handle API Call from User 2
 func proxyRequest(w http.ResponseWriter, r *http.Request) {
 	if r.Method == "OPTIONS" {
 		handleOptions(w, r)
@@ -65,8 +62,7 @@ func proxyRequest(w http.ResponseWriter, r *http.Request) {
 
 	enableCORS(w)
 
-	apiKey := r.URL.Path[len("/api/"):] // Extract API key
-
+	apiKey := r.URL.Path[len("/api/"):]
 	mutex.Lock()
 	localAPI, exists := apiStore[apiKey]
 	mutex.Unlock()
@@ -76,7 +72,6 @@ func proxyRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Directly call User 1's local API
 	resp, err := http.Get(localAPI)
 	if err != nil {
 		http.Error(w, "Failed to reach User 1's API", http.StatusBadGateway)
@@ -84,15 +79,21 @@ func proxyRequest(w http.ResponseWriter, r *http.Request) {
 	}
 	defer resp.Body.Close()
 
-	// Forward response to User 2
 	w.Header().Set("Content-Type", "application/json")
 	io.Copy(w, resp.Body)
 }
 
 func main() {
-	http.HandleFunc("/register", registerAPI) // Register User 1's API
-	http.HandleFunc("/api/", proxyRequest)    // User 2 calls API
+	port := os.Getenv("PORT") // Get assigned PORT from Render
+	if port == "" {
+		port = "8080" // Default to 8080 for local testing
+	}
 
-	fmt.Println("Server running on localhost:8080")
-	log.Fatal(http.ListenAndServe(":8080", nil))
+	address := fmt.Sprintf("0.0.0.0:%s", port) // Bind to all network interfaces
+
+	http.HandleFunc("/register", registerAPI)
+	http.HandleFunc("/api/", proxyRequest)
+
+	fmt.Println("Server running on", address)
+	log.Fatal(http.ListenAndServe(address, nil))
 }
