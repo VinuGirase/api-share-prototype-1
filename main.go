@@ -7,6 +7,8 @@ import (
 	"log"
 	"net/http"
 	"sync"
+
+	"github.com/gorilla/websocket"
 )
 
 type APIMapping struct {
@@ -14,30 +16,62 @@ type APIMapping struct {
 }
 
 var (
-	apiStore = make(map[string]string)
-	mutex    = sync.Mutex{}
+	apiStore     = make(map[string]string)        // Maps API Key -> Local API URL
+	clientSockets = make(map[string]*websocket.Conn) // Maps API Key -> WebSocket Connection
+	mutex        = sync.Mutex{}
+	upgrader     = websocket.Upgrader{
+		CheckOrigin: func(r *http.Request) bool { return true }, // Allow all origins
+	}
 )
 
-// Enable CORS for all responses
+// Enable CORS
 func enableCORS(w http.ResponseWriter) {
 	w.Header().Set("Access-Control-Allow-Origin", "*")
 	w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
 	w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
 }
 
-// Handle OPTIONS request for CORS preflight
-func handleOptions(w http.ResponseWriter, r *http.Request) {
+// Handle WebSocket Connection (User 1)
+func wsHandler(w http.ResponseWriter, r *http.Request) {
 	enableCORS(w)
-	w.WriteHeader(http.StatusNoContent)
+
+	conn, err := upgrader.Upgrade(w, r, nil)
+	if err != nil {
+		log.Println("WebSocket upgrade error:", err)
+		return
+	}
+	defer conn.Close()
+
+	// Read API Key from WebSocket
+	var apiKey string
+	err = conn.ReadJSON(&apiKey)
+	if err != nil {
+		log.Println("Failed to read API Key:", err)
+		return
+	}
+
+	// Store WebSocket Connection
+	mutex.Lock()
+	clientSockets[apiKey] = conn
+	mutex.Unlock()
+
+	log.Println("User 1 connected for API:", apiKey)
+
+	// Listen for disconnection
+	for {
+		_, _, err := conn.ReadMessage()
+		if err != nil {
+			log.Println("User 1 disconnected:", err)
+			mutex.Lock()
+			delete(clientSockets, apiKey)
+			mutex.Unlock()
+			break
+		}
+	}
 }
 
 // Register User 1's Local API
 func registerAPI(w http.ResponseWriter, r *http.Request) {
-	if r.Method == "OPTIONS" {
-		handleOptions(w, r)
-		return
-	}
-
 	enableCORS(w)
 
 	var apiData APIMapping
@@ -53,77 +87,64 @@ func registerAPI(w http.ResponseWriter, r *http.Request) {
 	apiStore[apiKey] = apiData.LocalAPI
 	mutex.Unlock()
 
-	baseURL := "https://api-share-prototype-1-jr7j.onrender.com"
-	
-
-	publicURL := fmt.Sprintf("%s/api/%s", baseURL, apiKey)
-	json.NewEncoder(w).Encode(map[string]string{"public_api": publicURL})
+	publicURL := fmt.Sprintf("https://api-share-prototype-1-jr7j.onrender.com/api/%s", apiKey)
+	json.NewEncoder(w).Encode(map[string]string{"public_api": publicURL, "ws_url": fmt.Sprintf("wss://api-share-prototype-1-jr7j.onrender.com/ws/%s", apiKey)})
 }
 
 // Handle API Call from User 2
 func proxyRequest(w http.ResponseWriter, r *http.Request) {
-	if r.Method == "OPTIONS" {
-		handleOptions(w, r)
-		return
-	}
-
 	enableCORS(w)
 
 	apiKey := r.URL.Path[len("/api/"):] // Extract API key
 
 	mutex.Lock()
 	localAPI, exists := apiStore[apiKey]
+	wsConn, wsExists := clientSockets[apiKey]
 	mutex.Unlock()
 
 	if !exists {
 		http.Error(w, "API not found", http.StatusNotFound)
-		log.Println("ERROR: API key not found:", apiKey)
 		return
 	}
 
-	log.Println("Proxying request to:", localAPI)
-
-	// Create a request with the same method & body
-	req, err := http.NewRequest(r.Method, localAPI, r.Body)
-	if err != nil {
-		http.Error(w, "Failed to create request", http.StatusInternalServerError)
-		log.Println("ERROR: Failed to create request:", err)
-		return
-	}
-
-	// Copy headers
-	for key, values := range r.Header {
-		for _, value := range values {
-			req.Header.Add(key, value)
+	// Send request details via WebSocket if connected
+	if wsExists {
+		reqData := map[string]interface{}{
+			"method": r.Method,
+			"url":    localAPI,
+			"headers": r.Header,
 		}
-	}
 
-	client := &http.Client{}
-	resp, err := client.Do(req)
-	if err != nil {
-		http.Error(w, "Failed to reach the registered API", http.StatusBadGateway)
-		log.Println("ERROR: Failed to reach the registered API:", err)
+		// Read request body
+		body, _ := io.ReadAll(r.Body)
+		reqData["body"] = string(body)
+
+		err := wsConn.WriteJSON(reqData)
+		if err != nil {
+			log.Println("Failed to send request via WebSocket:", err)
+		}
+
+		// Receive response from WebSocket
+		var responseData map[string]interface{}
+		err = wsConn.ReadJSON(&responseData)
+		if err != nil {
+			http.Error(w, "Failed to receive response from User 1", http.StatusBadGateway)
+			return
+		}
+
+		// Send response back to User 2
+		w.WriteHeader(int(responseData["status"].(float64)))
+		json.NewEncoder(w).Encode(responseData["body"])
 		return
 	}
-	defer resp.Body.Close()
 
-	log.Println("Successfully reached API. Status:", resp.StatusCode)
-
-	// Forward response headers
-	for key, values := range resp.Header {
-		for _, value := range values {
-			w.Header().Add(key, value)
-		}
-	}
-
-	// Forward response status & body
-	w.WriteHeader(resp.StatusCode)
-	io.Copy(w, resp.Body)
+	http.Error(w, "User 1 is not online", http.StatusServiceUnavailable)
 }
 
 func main() {
 	http.HandleFunc("/register", registerAPI) // Register User 1's API
 	http.HandleFunc("/api/", proxyRequest)    // Proxy API request
+	http.HandleFunc("/ws/", wsHandler)        // WebSocket Connection
 
 	port := "8080"
 	fmt.Println("Server running on port:", port)
