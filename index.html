@@ -13,14 +13,30 @@
 
     <script>
         async function registerAPI() {
-            const localApi = document.getElementById("localApi").value;
-            const response = await fetch("https://api-share-prototype-1-jr7j.onrender.com/register", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ local_api: localApi })
-            });
-            const data = await response.json();
-            document.getElementById("publicLink").innerText = data.public_api;
+            const localApi = document.getElementById("localApi").value.trim();
+
+            if (!localApi) {
+                alert("Please enter a valid local API URL.");
+                return;
+            }
+
+            try {
+                const response = await fetch("https://api-share-prototype-1-jr7j.onrender.com/register", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ local_api: localApi })
+                });
+
+                if (!response.ok) {
+                    throw new Error(`HTTP Error! Status: ${response.status}`);
+                }
+
+                const data = await response.json();
+                document.getElementById("publicLink").innerText = data.public_api;
+            } catch (error) {
+                console.error("Failed to register API:", error);
+                document.getElementById("publicLink").innerText = "Error registering API. Check console.";
+            }
         }
     </script>
 </body>
