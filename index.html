@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Local API Tester</title>
+</head>
+<body>
+    <h2>Share Your Local API</h2>
+    <input type="text" id="localApi" placeholder="Enter your local API URL">
+    <button onclick="registerAPI()">Generate Link</button>
+    <p>Share this link: <span id="publicLink"></span></p>
+
+    <script>
+        async function registerAPI() {
+            const localApi = document.getElementById("localApi").value;
+            const response = await fetch("http://localhost:8080/register", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ local_api: localApi })
+            });
+            const data = await response.json();
+            document.getElementById("publicLink").innerText = data.public_api;
+        }
+    </script>
+</body>
+</html>
