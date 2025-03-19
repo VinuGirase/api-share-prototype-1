@@ -80,16 +80,36 @@ func proxyRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Directly call User 1's local API
-	resp, err := http.Get(localAPI)
+	// Forward the request to the registered API
+	req, err := http.NewRequest(r.Method, localAPI, r.Body)
+	if err != nil {
+		http.Error(w, "Failed to create request", http.StatusInternalServerError)
+		return
+	}
+
+	// Copy headers
+	for key, values := range r.Header {
+		for _, value := range values {
+			req.Header.Add(key, value)
+		}
+	}
+
+	client := &http.Client{}
+	resp, err := client.Do(req)
 	if err != nil {
 		http.Error(w, "Failed to reach the registered API", http.StatusBadGateway)
 		return
 	}
 	defer resp.Body.Close()
 
-	// Forward response to User 2
-	w.Header().Set("Content-Type", "application/json")
+	// Copy response headers
+	for key, values := range resp.Header {
+		for _, value := range values {
+			w.Header().Add(key, value)
+		}
+	}
+
+	// Forward response status and body
 	w.WriteHeader(resp.StatusCode)
 	io.Copy(w, resp.Body)
 }
