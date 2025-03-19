@@ -80,7 +80,7 @@ func proxyRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Forward the request to the registered API
+	// Create a request with the same method & body
 	req, err := http.NewRequest(r.Method, localAPI, r.Body)
 	if err != nil {
 		http.Error(w, "Failed to create request", http.StatusInternalServerError)
@@ -102,14 +102,14 @@ func proxyRequest(w http.ResponseWriter, r *http.Request) {
 	}
 	defer resp.Body.Close()
 
-	// Copy response headers
+	// Forward response headers
 	for key, values := range resp.Header {
 		for _, value := range values {
 			w.Header().Add(key, value)
 		}
 	}
 
-	// Forward response status and body
+	// Forward response status & body
 	w.WriteHeader(resp.StatusCode)
 	io.Copy(w, resp.Body)
 }
