@@ -77,13 +77,17 @@ func proxyRequest(w http.ResponseWriter, r *http.Request) {
 
 	if !exists {
 		http.Error(w, "API not found", http.StatusNotFound)
+		log.Println("ERROR: API key not found:", apiKey)
 		return
 	}
+
+	log.Println("Proxying request to:", localAPI)
 
 	// Create a request with the same method & body
 	req, err := http.NewRequest(r.Method, localAPI, r.Body)
 	if err != nil {
 		http.Error(w, "Failed to create request", http.StatusInternalServerError)
+		log.Println("ERROR: Failed to create request:", err)
 		return
 	}
 
@@ -98,9 +102,12 @@ func proxyRequest(w http.ResponseWriter, r *http.Request) {
 	resp, err := client.Do(req)
 	if err != nil {
 		http.Error(w, "Failed to reach the registered API", http.StatusBadGateway)
+		log.Println("ERROR: Failed to reach the registered API:", err)
 		return
 	}
 	defer resp.Body.Close()
+
+	log.Println("Successfully reached API. Status:", resp.StatusCode)
 
 	// Forward response headers
 	for key, values := range resp.Header {
